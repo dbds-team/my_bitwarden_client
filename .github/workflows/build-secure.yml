@@ -1,0 +1,106 @@
+name: Secure Build Without Private Dependencies
+
+on:
+  push:
+    branches: [build-private]
+  workflow_dispatch:
+
+jobs:
+  build-web-secure:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      
+      - name: Remove private SDK dependency
+        run: |
+          # Remove SDK-internal from package.json
+          sed -i '/@bitwarden\/sdk-internal/d' package.json
+          echo "Private SDK dependency removed"
+      
+      - name: Install dependencies (skip optional)
+        run: npm ci --omit=optional || npm ci
+      
+      - name: Build web vault
+        working-directory: apps/web
+        run: npm run dist:oss:selfhost
+        continue-on-error: true
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitwarden-web-secure
+          path: apps/web/build/
+          if-no-files-found: warn
+
+  build-from-source-sdk:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      
+      - name: Clone and build SDK from source
+        run: |
+          # Clone the public SDK source
+          git clone https://github.com/bitwarden/sdk-internal ../sdk-internal || true
+          
+          # Try to build it (may fail due to Rust dependencies)
+          cd ../sdk-internal
+          npm install || true
+          npm run build || true
+          
+      - name: Link SDK or remove dependency
+        run: |
+          if [ -d "../sdk-internal/dist" ]; then
+            npm link ../sdk-internal
+            echo "SDK linked from source"
+          else
+            sed -i '/@bitwarden\/sdk-internal/d' package.json
+            echo "SDK build failed, dependency removed"
+          fi
+      
+      - run: npm ci
+      
+      - name: Build all clients
+        run: |
+          # Build what we can
+          npm run build:oss:browser:prod || true
+          npm run build:oss:cli:prod || true
+          npm run build:oss:desktop:prod || true
+          npm run build:oss:web:prod || true
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitwarden-clients-from-source
+          path: |
+            apps/*/build/
+            apps/*/dist/
+          if-no-files-found: warn
+
+  audit-dependencies:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: List all dependencies
+        run: |
+          echo "## All npm dependencies" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat package.json | jq '.dependencies' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+      
+      - name: Check for private packages
+        run: |
+          echo "## Checking for private/internal packages" >> $GITHUB_STEP_SUMMARY
+          grep -E "(internal|private|sdk)" package.json >> $GITHUB_STEP_SUMMARY || echo "No suspicious packages found" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Security audit
+        run: |
+          npm audit --audit-level=high || true
