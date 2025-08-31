@@ -1,0 +1,220 @@
+name: Build Private Clients
+
+on:
+  push:
+    branches:
+      - build-private
+  workflow_dispatch:
+    inputs:
+      build_web:
+        description: "Build web client"
+        required: false
+        default: true
+        type: boolean
+      build_desktop:
+        description: "Build desktop client"
+        required: false
+        default: true
+        type: boolean
+      build_cli:
+        description: "Build CLI client"
+        required: false
+        default: true
+        type: boolean
+      build_browser:
+        description: "Build browser extension"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      node_version: ${{ steps.retrieve-node-version.outputs.node_version }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Get GitHub sha as version
+        id: version
+        run: echo "value=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+
+      - name: Get Node Version
+        id: retrieve-node-version
+        run: |
+          NODE_NVMRC=$(cat .nvmrc)
+          NODE_VERSION=${NODE_NVMRC/v/''}
+          echo "node_version=$NODE_VERSION" >> $GITHUB_OUTPUT
+
+  build-web:
+    name: Build Web Client
+    if: ${{ github.event.inputs.build_web != 'false' }}
+    runs-on: ubuntu-24.04
+    needs: setup
+    env:
+      _NODE_VERSION: ${{ needs.setup.outputs.node_version }}
+      _VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env._NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web (selfhosted)
+        working-directory: apps/web
+        run: npm run dist:oss:selfhost
+
+      - name: Zip web artifacts
+        working-directory: apps/web
+        run: |
+          zip -r web-${{ env._VERSION }}-selfhosted.zip build
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ env._VERSION }}-selfhosted.zip
+          path: apps/web/web-${{ env._VERSION }}-selfhosted.zip
+          if-no-files-found: error
+
+  build-desktop:
+    name: Build Desktop Client
+    if: ${{ github.event.inputs.build_desktop != 'false' }}
+    runs-on: ubuntu-24.04
+    needs: setup
+    env:
+      _NODE_VERSION: ${{ needs.setup.outputs.node_version }}
+      _VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env._NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Desktop native
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/desktop_native/target
+          key: ${{ runner.os }}-desktop-native-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-native-target-
+
+      - name: Build Desktop native
+        working-directory: apps/desktop/desktop_native
+        run: npm run build
+
+      - name: Build Desktop (Linux)
+        working-directory: apps/desktop
+        run: npm run dist:lin
+
+      - name: Upload Desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ env._VERSION }}-linux
+          path: apps/desktop/dist/*.{deb,rpm,tar.gz,AppImage}
+          if-no-files-found: error
+
+  build-cli:
+    name: Build CLI Client
+    if: ${{ github.event.inputs.build_cli != 'false' }}
+    runs-on: ubuntu-24.04
+    needs: setup
+    env:
+      _NODE_VERSION: ${{ needs.setup.outputs.node_version }}
+      _VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env._NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build CLI
+        working-directory: apps/cli
+        run: |
+          npm run build:prod
+          npm run clean
+          npm run package:lin
+
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ env._VERSION }}-linux
+          path: apps/cli/dist/*.zip
+          if-no-files-found: error
+
+  build-browser:
+    name: Build Browser Extension
+    if: ${{ github.event.inputs.build_browser != 'false' }}
+    runs-on: ubuntu-24.04
+    needs: setup
+    strategy:
+      matrix:
+        browser: [chrome, firefox, edge, safari]
+    env:
+      _NODE_VERSION: ${{ needs.setup.outputs.node_version }}
+      _VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env._NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build browser extension
+        working-directory: apps/browser
+        run: |
+          if [[ "${{ matrix.browser }}" == "safari" ]]; then
+            npm run dist:safari
+          else
+            npm run dist:${{ matrix.browser }}
+          fi
+
+      - name: Create zip for browser extension
+        working-directory: apps/browser
+        run: |
+          cd build
+          zip -r ../browser-${{ env._VERSION }}-${{ matrix.browser }}.zip *
+
+      - name: Upload browser extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-${{ env._VERSION }}-${{ matrix.browser }}.zip
+          path: apps/browser/browser-${{ env._VERSION }}-${{ matrix.browser }}.zip
+          if-no-files-found: error
