@@ -211,3 +211,141 @@ jobs:
           name: bitwarden-browser-${{ matrix.browser }}
           path: apps/browser/build/
           if-no-files-found: warn
+  
+  create-release:
+    name: Create Release with All Artifacts
+    needs: [build-sdk, build-web, build-desktop, build-cli, build-browser]
+    runs-on: ubuntu-22.04
+    if: always()
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Generate version info
+        id: version
+        run: |
+          VERSION="v$(date +%Y%m%d.%H%M)-$(echo $GITHUB_SHA | head -c 7)"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+          echo "date=$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+      
+      - name: Prepare release files
+        run: |
+          cd release-artifacts
+          
+          # Package SDK
+          if [ -d "sdk-internal-wasm" ]; then
+            cd sdk-internal-wasm
+            tar -czf ../bitwarden-sdk-wasm-${{ steps.version.outputs.tag }}.tar.gz *
+            cd ..
+          fi
+          
+          # Package Web
+          if [ -d "bitwarden-web" ]; then
+            cd bitwarden-web
+            tar -czf ../bitwarden-web-${{ steps.version.outputs.tag }}.tar.gz *
+            cd ..
+          fi
+          
+          # Package Desktop
+          if [ -d "bitwarden-desktop" ]; then
+            cd bitwarden-desktop
+            tar -czf ../bitwarden-desktop-${{ steps.version.outputs.tag }}.tar.gz *
+            cd ..
+          fi
+          
+          # Package CLI
+          if [ -d "bitwarden-cli" ]; then
+            cd bitwarden-cli
+            tar -czf ../bitwarden-cli-${{ steps.version.outputs.tag }}.tar.gz *
+            cd ..
+          fi
+          
+          # Package Browser Extensions
+          for browser in chrome firefox edge; do
+            if [ -d "bitwarden-browser-$browser" ]; then
+              cd "bitwarden-browser-$browser"
+              zip -r ../bitwarden-browser-$browser-${{ steps.version.outputs.tag }}.zip *
+              cd ..
+            fi
+          done
+          
+          # Generate checksums
+          sha256sum *.tar.gz *.zip 2>/dev/null > checksums-${{ steps.version.outputs.tag }}.txt || true
+          
+          # List all files for release
+          ls -la *.tar.gz *.zip *.txt 2>/dev/null || true
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Bitwarden Clients ${{ steps.version.outputs.tag }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          body: |
+            ## 🚀 Bitwarden Clients Release ${{ steps.version.outputs.tag }}
+            
+            **Build Date:** ${{ steps.version.outputs.date }}
+            **Commit:** `${{ github.sha }}`
+            **Branch:** `build-private`
+            
+            ### ✨ Features
+            - ✅ **100% Open Source Build** - SDK built from source
+            - ✅ **No Private Dependencies** - All dependencies are public
+            - ✅ **Fully Auditable** - Complete build transparency
+            - ✅ **SDK Source:** [dbds-team/my_sdk-internal](https://github.com/dbds-team/my_sdk-internal)
+            
+            ### 📦 Available Downloads
+            
+            #### Core Components
+            - 🔧 **SDK WASM**: `bitwarden-sdk-wasm-*.tar.gz` - WebAssembly SDK built from source
+            - 🌐 **Web Vault**: `bitwarden-web-*.tar.gz` - Self-hosted web interface
+            - 🖥️ **Desktop App**: `bitwarden-desktop-*.tar.gz` - Linux desktop application
+            - 💻 **CLI Tool**: `bitwarden-cli-*.tar.gz` - Command-line interface
+            
+            #### Browser Extensions
+            - 🌍 **Chrome**: `bitwarden-browser-chrome-*.zip`
+            - 🦊 **Firefox**: `bitwarden-browser-firefox-*.zip`
+            - 🔷 **Edge**: `bitwarden-browser-edge-*.zip`
+            
+            ### 🔒 Security
+            - All artifacts include SHA256 checksums in `checksums-*.txt`
+            - Built entirely from public source code
+            - No telemetry or tracking code
+            
+            ### 📝 Installation
+            
+            **Web Vault:**
+            ```bash
+            tar -xzf bitwarden-web-*.tar.gz
+            # Serve with any web server
+            ```
+            
+            **CLI:**
+            ```bash
+            tar -xzf bitwarden-cli-*.tar.gz
+            chmod +x bw
+            ./bw --help
+            ```
+            
+            **Browser Extension:**
+            1. Extract the zip file
+            2. Open browser extension management
+            3. Enable developer mode
+            4. Load unpacked extension from extracted folder
+            
+            ### ⚠️ Note
+            Some builds may have partial failures due to complex dependencies.
+            Check individual artifact availability above.
+          files: |
+            release-artifacts/*.tar.gz
+            release-artifacts/*.zip
+            release-artifacts/*.txt
