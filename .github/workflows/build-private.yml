@@ -72,12 +72,12 @@ jobs:
       
       - name: Build CLI
         working-directory: apps/cli
-        run: npm run build:prod && npm run package:lin
+        run: npm run dist:oss:lin
       
       - uses: actions/upload-artifact@v4
         with:
           name: bitwarden-cli
-          path: apps/cli/dist/*
+          path: apps/cli/dist/**/*
   
   build-browser:
     runs-on: ubuntu-22.04
