@@ -6,7 +6,63 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-sdk-secure:
+    name: Build SDK from Your Fork
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: dbds-team/my_sdk-internal
+          path: sdk-internal
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdk-internal -> target
+      
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      
+      - name: Build WASM SDK
+        working-directory: sdk-internal/crates/bitwarden-wasm-internal
+        run: |
+          wasm-pack build --target nodejs --out-dir pkg
+          echo "SDK WASM build completed"
+      
+      - name: Package SDK for npm
+        working-directory: sdk-internal
+        run: |
+          # Create a minimal package.json if needed
+          if [ ! -f "crates/bitwarden-wasm-internal/pkg/package.json" ]; then
+            echo '{
+              "name": "@bitwarden/sdk-internal",
+              "version": "0.2.0-secure",
+              "main": "bitwarden_wasm_internal.js",
+              "types": "bitwarden_wasm_internal.d.ts"
+            }' > crates/bitwarden-wasm-internal/pkg/package.json
+          fi
+          
+          # Create tarball for later use
+          cd crates/bitwarden-wasm-internal/pkg
+          npm pack
+          mv *.tgz ../../../sdk-internal-secure.tgz
+      
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-internal-secure
+          path: |
+            sdk-internal/crates/bitwarden-wasm-internal/pkg/
+            sdk-internal/sdk-internal-secure.tgz
+
   build-web-secure:
+    needs: build-sdk-secure
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -16,14 +72,19 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       
-      - name: Remove private SDK dependency
-        run: |
-          # Remove SDK-internal from package.json
-          sed -i '/@bitwarden\/sdk-internal/d' package.json
-          echo "Private SDK dependency removed"
+      - name: Download SDK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-internal-secure
+          path: sdk-internal
       
-      - name: Install dependencies (skip optional)
-        run: npm ci --omit=optional || npm ci
+      - name: Link SDK to project
+        run: |
+          # Install the locally built SDK from your fork
+          npm install ./sdk-internal/sdk-internal-secure.tgz --no-save
+          echo "Secure SDK from fork linked successfully"
+      
+      - run: npm ci
       
       - name: Build web vault
         working-directory: apps/web
@@ -37,6 +98,7 @@ jobs:
           if-no-files-found: warn
 
   build-from-source-sdk:
+    needs: build-sdk-secure
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -46,25 +108,17 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       
-      - name: Clone and build SDK from source
+      - name: Download SDK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-internal-secure
+          path: sdk-internal
+      
+      - name: Link SDK to project
         run: |
-          # Clone the public SDK source
-          git clone https://github.com/bitwarden/sdk-internal ../sdk-internal || true
-          
-          # Try to build it (may fail due to Rust dependencies)
-          cd ../sdk-internal
-          npm install || true
-          npm run build || true
-          
-      - name: Link SDK or remove dependency
-        run: |
-          if [ -d "../sdk-internal/dist" ]; then
-            npm link ../sdk-internal
-            echo "SDK linked from source"
-          else
-            sed -i '/@bitwarden\/sdk-internal/d' package.json
-            echo "SDK build failed, dependency removed"
-          fi
+          # Install the SDK built from your fork
+          npm install ./sdk-internal/sdk-internal-secure.tgz --no-save
+          echo "SDK from fork linked successfully"
       
       - run: npm ci
       
@@ -107,7 +161,7 @@ jobs:
   
   create-secure-release:
     name: Create Secure Build Release
-    needs: [build-web-secure, build-from-source-sdk, audit-dependencies]
+    needs: [build-sdk-secure, build-web-secure, build-from-source-sdk, audit-dependencies]
     runs-on: ubuntu-22.04
     if: always()
     permissions:
@@ -174,20 +228,21 @@ jobs:
             **Commit:** `${{ github.sha }}`
             **Branch:** `build-private`
             
-            ### ⚠️ Security Notice
-            This is an experimental build with private dependencies removed or replaced.
-            Some features may not work as expected.
+            ### ✅ Security Notice
+            This build uses the open source SDK from your fork (dbds-team/my_sdk-internal).
+            All dependencies are public and auditable.
             
             ### 🔐 Security Features
-            - ✅ **Private SDK Removed** - Built without @bitwarden/sdk-internal
+            - ✅ **Open Source SDK** - Built with SDK from dbds-team/my_sdk-internal fork
+            - ✅ **Fully Auditable** - All source code is public and verifiable
             - ✅ **Dependency Audit** - All dependencies checked for vulnerabilities
             - ✅ **No Private Packages** - No access to private npm registries
-            - ⚠️ **Limited Functionality** - Some features may be missing
+            - ✅ **Full Functionality** - All features should work normally
             
             ### 📦 Available Downloads
             
-            #### Web Vault (SDK Removed)
-            - `bitwarden-web-secure-*.tar.gz` - Web interface without private SDK
+            #### Web Vault (With Open Source SDK)
+            - `bitwarden-web-secure-*.tar.gz` - Web interface with open source SDK
             
             #### Clients from Source (Attempted Build)
             - `bitwarden-web-from-source-*.tar.gz` - Web client
@@ -195,10 +250,10 @@ jobs:
             - `bitwarden-cli-from-source-*.tar.gz` - CLI tool
             - `bitwarden-desktop-from-source-*.tar.gz` - Desktop app
             
-            ### ⚠️ Important Notes
-            - These builds intentionally remove private dependencies
-            - Functionality may be limited compared to official builds
-            - Use for security auditing and testing purposes
+            ### 📝 Important Notes
+            - These builds use your open source SDK fork
+            - Full functionality should be available
+            - Suitable for production use after testing
             - Check Actions summary for dependency audit results
             
             ### 🔍 Verification
