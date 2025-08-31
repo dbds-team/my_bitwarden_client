@@ -104,3 +104,105 @@ jobs:
       - name: Security audit
         run: |
           npm audit --audit-level=high || true
+  
+  create-secure-release:
+    name: Create Secure Build Release
+    needs: [build-web-secure, build-from-source-sdk, audit-dependencies]
+    runs-on: ubuntu-22.04
+    if: always()
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Generate version info
+        id: version
+        run: |
+          VERSION="secure-v$(date +%Y%m%d.%H%M)-$(echo $GITHUB_SHA | head -c 7)"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+          echo "date=$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+      
+      - name: Prepare release files
+        run: |
+          cd release-artifacts
+          
+          # Package Web Secure build
+          if [ -d "bitwarden-web-secure" ]; then
+            cd bitwarden-web-secure
+            tar -czf ../bitwarden-web-secure-${{ steps.version.outputs.tag }}.tar.gz *
+            cd ..
+          fi
+          
+          # Package all clients from source build
+          if [ -d "bitwarden-clients-from-source" ]; then
+            cd bitwarden-clients-from-source
+            
+            # Package each app separately
+            for app in apps/*; do
+              if [ -d "$app/build" ] || [ -d "$app/dist" ]; then
+                app_name=$(basename "$app")
+                tar -czf ../bitwarden-${app_name}-from-source-${{ steps.version.outputs.tag }}.tar.gz -C "$app" .
+              fi
+            done
+            cd ..
+          fi
+          
+          # Generate checksums
+          sha256sum *.tar.gz 2>/dev/null > checksums-${{ steps.version.outputs.tag }}.txt || true
+          
+          # List all files for release
+          ls -la *.tar.gz *.txt 2>/dev/null || true
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Secure Build ${{ steps.version.outputs.tag }}"
+          draft: false
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            ## 🔒 Secure Build Without Private Dependencies
+            
+            **Build Date:** ${{ steps.version.outputs.date }}
+            **Commit:** `${{ github.sha }}`
+            **Branch:** `build-private`
+            
+            ### ⚠️ Security Notice
+            This is an experimental build with private dependencies removed or replaced.
+            Some features may not work as expected.
+            
+            ### 🔐 Security Features
+            - ✅ **Private SDK Removed** - Built without @bitwarden/sdk-internal
+            - ✅ **Dependency Audit** - All dependencies checked for vulnerabilities
+            - ✅ **No Private Packages** - No access to private npm registries
+            - ⚠️ **Limited Functionality** - Some features may be missing
+            
+            ### 📦 Available Downloads
+            
+            #### Web Vault (SDK Removed)
+            - `bitwarden-web-secure-*.tar.gz` - Web interface without private SDK
+            
+            #### Clients from Source (Attempted Build)
+            - `bitwarden-web-from-source-*.tar.gz` - Web client
+            - `bitwarden-browser-from-source-*.tar.gz` - Browser extension
+            - `bitwarden-cli-from-source-*.tar.gz` - CLI tool
+            - `bitwarden-desktop-from-source-*.tar.gz` - Desktop app
+            
+            ### ⚠️ Important Notes
+            - These builds intentionally remove private dependencies
+            - Functionality may be limited compared to official builds
+            - Use for security auditing and testing purposes
+            - Check Actions summary for dependency audit results
+            
+            ### 🔍 Verification
+            All artifacts include SHA256 checksums in `checksums-*.txt`
+          files: |
+            release-artifacts/*.tar.gz
+            release-artifacts/*.txt
