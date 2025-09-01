@@ -98,7 +98,20 @@ jobs:
   
   build-desktop:
     needs: build-sdk
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-12]
+        include:
+          - os: ubuntu-22.04
+            dist-cmd: dist:lin
+            artifact-name: bitwarden-desktop-linux
+          - os: windows-2022
+            dist-cmd: dist:win
+            artifact-name: bitwarden-desktop-windows
+          - os: macos-12
+            dist-cmd: dist:mac
+            artifact-name: bitwarden-desktop-macos
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       
@@ -108,6 +121,12 @@ jobs:
           cache: npm
       
       - uses: dtolnay/rust-toolchain@stable
+        if: matrix.os != 'macos-12'
+      
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.os == 'macos-12'
+        with:
+          targets: x86_64-apple-darwin, aarch64-apple-darwin
       
       - uses: Swatinem/rust-cache@v2
         with:
@@ -132,12 +151,12 @@ jobs:
       
       - name: Build desktop
         working-directory: apps/desktop
-        run: npm run dist:lin
+        run: npm run ${{ matrix.dist-cmd }}
         continue-on-error: true
       
       - uses: actions/upload-artifact@v4
         with:
-          name: bitwarden-desktop
+          name: ${{ matrix.artifact-name }}
           path: apps/desktop/dist/*
           if-no-files-found: warn
   
@@ -253,10 +272,24 @@ jobs:
             cd ..
           fi
           
-          # Package Desktop
-          if [ -d "bitwarden-desktop" ]; then
-            cd bitwarden-desktop
-            tar -czf ../bitwarden-desktop-${{ steps.version.outputs.tag }}.tar.gz *
+          # Package Desktop (Linux)
+          if [ -d "bitwarden-desktop-linux" ]; then
+            cd bitwarden-desktop-linux
+            tar -czf ../bitwarden-desktop-linux-${{ steps.version.outputs.tag }}.tar.gz *
+            cd ..
+          fi
+          
+          # Package Desktop (Windows)
+          if [ -d "bitwarden-desktop-windows" ]; then
+            cd bitwarden-desktop-windows
+            zip -r ../bitwarden-desktop-windows-${{ steps.version.outputs.tag }}.zip *
+            cd ..
+          fi
+          
+          # Package Desktop (macOS)
+          if [ -d "bitwarden-desktop-macos" ]; then
+            cd bitwarden-desktop-macos
+            tar -czf ../bitwarden-desktop-macos-${{ steps.version.outputs.tag }}.tar.gz *
             cd ..
           fi
           
@@ -308,8 +341,12 @@ jobs:
             #### Core Components
             - 🔧 **SDK WASM**: `bitwarden-sdk-wasm-*.tar.gz` - WebAssembly SDK built from source
             - 🌐 **Web Vault**: `bitwarden-web-*.tar.gz` - Self-hosted web interface
-            - 🖥️ **Desktop App**: `bitwarden-desktop-*.tar.gz` - Linux desktop application
             - 💻 **CLI Tool**: `bitwarden-cli-*.tar.gz` - Command-line interface
+            
+            #### Desktop Applications
+            - 🐧 **Linux**: `bitwarden-desktop-linux-*.tar.gz` - AppImage/deb/rpm packages
+            - 🪟 **Windows**: `bitwarden-desktop-windows-*.zip` - exe/msi installers
+            - 🍎 **macOS**: `bitwarden-desktop-macos-*.tar.gz` - dmg/pkg installers
             
             #### Browser Extensions
             - 🌍 **Chrome**: `bitwarden-browser-chrome-*.zip`
