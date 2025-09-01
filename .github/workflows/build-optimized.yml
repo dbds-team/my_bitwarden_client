@@ -89,14 +89,17 @@ jobs:
       - name: Package web vault
         working-directory: apps/web
         run: |
-          cd build
-          tar -czf ../../bitwarden-web.tar.gz *
-          echo "Web vault packaged"
+          if [ -d build ]; then
+            cd build
+            tar -czf ../../bitwarden-web.tar.gz *
+            echo "Web vault packaged"
+          fi
       
       - uses: actions/upload-artifact@v4
         with:
           name: bitwarden-web
           path: apps/bitwarden-web.tar.gz
+          if-no-files-found: warn
   
   build-desktop:
     needs: build-sdk
@@ -147,17 +150,10 @@ jobs:
         run: npm run build
         continue-on-error: true
       
-      - name: Build desktop (optimized for single architecture)
+      - name: Build desktop
         working-directory: apps/desktop
         run: |
-          # For Windows, only build x64 to reduce size
-          if [[ "${{ matrix.os }}" == "windows-2022" ]]; then
-            npm run clean:dist
-            npm run build
-            npx electron-builder --win --x64 -p never
-          else
-            npm run ${{ matrix.dist-cmd }}
-          fi
+          npm run ${{ matrix.dist-cmd }}
         shell: bash
         continue-on-error: true
       
@@ -181,6 +177,10 @@ jobs:
             apps/desktop/dist/*.msi
             apps/desktop/dist/*.dmg
             apps/desktop/dist/*.pkg
+            apps/desktop/dist/*.zip
+            !apps/desktop/dist/*-blockmap.zip
+            !apps/desktop/dist/*.blockmap
+            !apps/desktop/dist/*-unpacked
           if-no-files-found: warn
   
   build-cli:
@@ -359,7 +359,7 @@ jobs:
             ### 📦 Downloads
             
             #### 🌐 Web Vault
-            - `bitwarden-web-*.tar.gz` - Self-hosted web interface
+            - `bitwarden-web-*.tar.gz` - Self-hosted web interface (~10MB)
             
             #### 💻 Desktop Applications
             **Windows:**
