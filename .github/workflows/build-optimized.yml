@@ -145,9 +145,39 @@ jobs:
       
       - run: npm ci
       
+      - name: Rebuild Electron native modules
+        working-directory: apps/desktop
+        run: |
+          npm run postinstall
+        shell: bash
+      
       - name: Build desktop native
-        working-directory: apps/desktop/desktop_native
-        run: npm run build
+        working-directory: apps/desktop
+        run: |
+          # Install native dependencies
+          cd desktop_native/napi
+          npm install
+          cd ../..
+          
+          # Build native module for the current platform
+          cd desktop_native
+          if [[ "${{ matrix.os }}" == "windows-2022" ]]; then
+            # Windows specific build
+            npm run build -- --release --target=x86_64-pc-windows-msvc
+          elif [[ "${{ matrix.os }}" == "ubuntu-22.04" ]]; then
+            # Linux specific build
+            npm run build -- --release --target=x86_64-unknown-linux-musl
+          else
+            # macOS universal build
+            npm run build -- --release
+          fi
+          cd ..
+          
+          # Verify native module was built
+          echo "Checking native module files:"
+          ls -la desktop_native/dist/ || true
+          ls -la desktop_native/napi/*.node || true
+        shell: bash
         continue-on-error: true
       
       - name: Build desktop
@@ -362,7 +392,7 @@ jobs:
             - `bitwarden-web-*.tar.gz` - Self-hosted web interface (~10MB)
             
             #### 💻 Desktop Applications
-            **Windows:**
+            **Windows:** ⚠️ [未签名版本使用说明](#windows-unsigned-notice)
             - `Bitwarden-*-x64.exe` - Installer (Recommended)
             - `Bitwarden-Portable-*.exe` - Portable version
             
