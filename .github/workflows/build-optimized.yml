@@ -162,21 +162,84 @@ jobs:
           # Build native module for the current platform
           cd desktop_native
           if [[ "${{ matrix.os }}" == "windows-2022" ]]; then
-            # Windows specific build
+            # Windows specific builds
+            echo "Building native module for Windows x64..."
             npm run build -- --release --target=x86_64-pc-windows-msvc
+            
+            # Copy the built module to the correct location
+            mkdir -p ../node_modules/@bitwarden/desktop-napi/
+            cp napi/index.js ../node_modules/@bitwarden/desktop-napi/
+            cp napi/package.json ../node_modules/@bitwarden/desktop-napi/
+            
+            # Find and copy the native binary with correct naming
+            # The built file might be in different locations
+            for possible_file in \
+              "napi/desktop_napi.win32-x64-msvc.node" \
+              "napi/desktop-napi.win32-x64-msvc.node" \
+              "target/x86_64-pc-windows-msvc/release/desktop_napi.node" \
+              "target/release/desktop_napi.node"; do
+              if [ -f "$possible_file" ]; then
+                echo "Found native module: $possible_file"
+                cp "$possible_file" ../node_modules/@bitwarden/desktop-napi/desktop_napi.win32-x64-msvc.node
+                break
+              fi
+            done
+            
+            # Also check in the standard napi-rs output location
+            if [ -f "napi/index.node" ]; then
+              echo "Found index.node, copying as desktop_napi.win32-x64-msvc.node"
+              cp "napi/index.node" ../node_modules/@bitwarden/desktop-napi/desktop_napi.win32-x64-msvc.node
+            fi
+            
           elif [[ "${{ matrix.os }}" == "ubuntu-22.04" ]]; then
             # Linux specific build
+            echo "Building native module for Linux..."
             npm run build -- --release --target=x86_64-unknown-linux-musl
+            
+            # Copy the built module
+            mkdir -p ../node_modules/@bitwarden/desktop-napi/
+            cp napi/index.js ../node_modules/@bitwarden/desktop-napi/
+            cp napi/package.json ../node_modules/@bitwarden/desktop-napi/
+            
+            # Find and copy native binaries
+            for possible_file in \
+              "napi/desktop_napi.linux-x64-musl.node" \
+              "napi/desktop-napi.linux-x64-musl.node" \
+              "target/x86_64-unknown-linux-musl/release/desktop_napi.node" \
+              "target/release/desktop_napi.node" \
+              "napi/index.node"; do
+              if [ -f "$possible_file" ]; then
+                echo "Found native module: $possible_file"
+                cp "$possible_file" ../node_modules/@bitwarden/desktop-napi/desktop_napi.linux-x64-musl.node
+                # Also copy as gnu variant for compatibility
+                cp "$possible_file" ../node_modules/@bitwarden/desktop-napi/desktop_napi.linux-x64-gnu.node
+                break
+              fi
+            done
+            
           else
             # macOS universal build
+            echo "Building native module for macOS..."
             npm run build -- --release
+            
+            # Copy for macOS
+            mkdir -p ../node_modules/@bitwarden/desktop-napi/
+            cp napi/index.js ../node_modules/@bitwarden/desktop-napi/
+            cp napi/package.json ../node_modules/@bitwarden/desktop-napi/
+            cp napi/*.node ../node_modules/@bitwarden/desktop-napi/ || true
           fi
           cd ..
           
-          # Verify native module was built
-          echo "Checking native module files:"
-          ls -la desktop_native/dist/ || true
-          ls -la desktop_native/napi/*.node || true
+          # Verify native module was built and copied
+          echo "=== Checking native module files ==="
+          echo "In desktop_native/napi:"
+          ls -la desktop_native/napi/*.node 2>/dev/null || echo "No .node files in napi"
+          echo ""
+          echo "In node_modules/@bitwarden/desktop-napi:"
+          ls -la node_modules/@bitwarden/desktop-napi/ 2>/dev/null || echo "Module directory not found"
+          echo ""
+          echo "In desktop_native/dist:"
+          ls -la desktop_native/dist/ 2>/dev/null || echo "No dist directory"
         shell: bash
         continue-on-error: true
       
